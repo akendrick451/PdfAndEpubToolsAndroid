@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <Button
+        android:id="@+id/btnPickPDFForFilename"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Set PDF Filename" />
+
+    <Button
+        android:id="@+id/btnPickPDFForTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Set PDF Title" />
+
+    <TextView
+
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="v0.9" />
+
+    <TextView
+
+        android:layout_width="251dp"
+        android:layout_height="wrap_content"
+        android:text="This app let's you pick a pdf and then saves that PDF with the title being the filename into
+the downloads directory. By AKTools. 6 Dec 2025 " />
+
+
+
+
+
+    <Button
+        android:id="@+id/btn_pick_epub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:text="Pick EPUB → Generate and Add Cover"
+        android:textSize="16sp"/>
+
+    <TextView
+        android:id="@+id/lbl_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Status Messages" />
+
+    <EditText
+        android:id="@+id/text_status"
+        android:layout_width="match_parent"
+        android:layout_height="341dp"
+        android:gravity="start|top"
+       android:textSize="12sp"
+
+        android:inputType="none"
+        android:scrollbars="vertical" />
+
+
+
+</LinearLayout>
