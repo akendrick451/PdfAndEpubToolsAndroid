@@ -44,7 +44,8 @@ import nl.siegmann.epublib.epub.EpubWriter
 import nl.siegmann.epublib.domain.Resource
 import nl.siegmann.epublib.service.MediatypeService
 
-//checking an update for git
+// checking an update for git
+// issue where the table of contents is lost when this is run 
 
 class MainActivity : AppCompatActivity() {
 
@@ -646,8 +647,14 @@ class MainActivity : AppCompatActivity() {
                     tempEpub.delete()
                     throw IllegalStateException("Not a valid EPUB (DRM? Corrupted? Not an EPUB?)", e)
                 }
-                // ── Replace cover (FIXED – uses getResources()) ──────────────────
 
+                // try to preserve table of contents
+                // === ADD THIS BLOCK ===
+                if (book.tableOfContents == null || book.tableOfContents.tocReferences.isEmpty()) {
+                    book.generateTableOfContentsFromSpine()  // You may need to implement this helper
+                }
+
+                // ── Replace cover (FIXED – uses getResources()) ──────────────────
                 book.resources.remove("cover.jpg")
                 book.resources.remove("Images/cover.jpg")
                 book.resources.remove("OEBPS/cover.jpg")
