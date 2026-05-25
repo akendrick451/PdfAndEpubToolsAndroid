@@ -27,6 +27,7 @@ import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -40,23 +41,40 @@ import java.util.Calendar
 import java.util.Locale
 import nl.siegmann.epublib.domain.Book
 import nl.siegmann.epublib.epub.EpubReader
-import nl.siegmann.epublib.epub.EpubWriter
-import nl.siegmann.epublib.domain.Resource
 import nl.siegmann.epublib.service.MediatypeService
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 // checking an update for git
 // issue where the table of contents is lost when this is run 
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
+// RUN THIS UIN ANDROID ANDROID ANDROID ANDROID STUDIO! ========================================================================
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var btnPickPDFForFilename: Button
     private lateinit var btnPickPDFForTitle: Button
 
+    private lateinit var txtVersion: TextView
+
     private lateinit var txtStatus: TextView
     private lateinit var pdfPickerLauncherForFilename: ActivityResultLauncher<Intent>
     private lateinit var pdfPickerLauncherForTitleChange : ActivityResultLauncher<Intent>
     private val PICK_EPUB_REQUEST = 1001
 
+    public val appVersion= "v11.0 25 May 2026"
 
     private lateinit var btnPickEpub: Button
 
@@ -71,8 +89,8 @@ class MainActivity : AppCompatActivity() {
         btnPickPDFForFilename = findViewById(R.id.btnPickPDFForFilename)
          btnPickPDFForTitle = findViewById(R.id.btnPickPDFForTitle)
          txtStatus = findViewById(R.id.text_status)
-
-
+         txtVersion = findViewById(R.id.text_version)
+         txtVersion.text = appVersion
 
 
 
@@ -414,33 +432,46 @@ class MainActivity : AppCompatActivity() {
 
 
 
-    private fun getFileFromUri(uri: Uri): File? {
-        // Persist permissions so we can write later
-        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-        contentResolver.takePersistableUriPermission(uri, flags)
-
-        // Query the real file name and parent directory
-        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (cursor.moveToFirst() && nameIndex != -1) {
-                val displayName = cursor.getString(nameIndex)
-
-                // Build path inside the app-specific directory that SAF allows us to write to
-                // (DocumentsContract doesn't give direct /storage/emulated/0/... paths anymore)
-                val destination = File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), displayName)
-
-                // Copy original → destination so we have a real File we can overwrite
-                contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(destination).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                return destination
+    // Safe way - returns File only if possible, otherwise null
+    private fun getFileFromUri(uri: Uri?): File? {
+        // Try to get real path (works in some cases)
+        if ( uri == null ) {
+            return null
+        }  else {
+            val filePath = getRealPathFromUri(uri)
+            if (filePath != null) {
+                return File(filePath)
             }
         }
-        return null
+        // Fallback: Create temp file by copying content
+        return copyUriToTempFile(uri)
     }
 
+    // Helper to get real path (limited success)
+    private fun getRealPathFromUri(uri: Uri): String? {
+        val projection = arrayOf(MediaStore.MediaColumns.DATA)
+        return contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(0)
+            } else null
+        }
+    }
+
+    // Copy to cache as File (Most reliable)
+    private fun copyUriToTempFile(uri: Uri): File? {
+        val tempFile = File(cacheDir, "epub_${System.currentTimeMillis()}.epub")
+        return try {
+            contentResolver.openInputStream(uri)?.use { input ->
+                tempFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            tempFile
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
     // ─── Helper Functions (keep these) ───
     private fun getFileNameFromUri(uri: Uri): String? {
         return when (uri.scheme) {
@@ -614,7 +645,6 @@ class MainActivity : AppCompatActivity() {
     // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-
     private fun processEpub(epubUri: Uri) {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
@@ -637,12 +667,26 @@ class MainActivity : AppCompatActivity() {
                 if (bytesCopied == 0L || !tempEpub.exists() || tempEpub.length() == 0L) {
                     throw IllegalStateException("Copied file is empty – original EPUB could not be read")
                 }
+                normalizeGoogleDocsEpub(tempEpub, title)
+
+                // readEpub later seems to lose toc.ncx                  .xhml, get a handle on it here
+                val fileTocNCX = getTocNCX(tempEpub)
+                val fileTocNCXSaved = File(cacheDir, "nav_${System.currentTimeMillis()}.toc")
+                fileTocNCX.copyTo(fileTocNCXSaved, overwrite = true)
+
+                val fileNavXhtml = getNavXhtml(tempEpub)
+                val fileNavXhtmlSaved = File(cacheDir, "nav_${System.currentTimeMillis()}.xhtml")
+                fileNavXhtml.copyTo(fileNavXhtmlSaved, overwrite = true)
+                // NEED TO COPY THIS IS TEMP EPUB IS DELETED!!! - maybe just delte it later?
 
                 // ── Read safely (your helper function) ────────────────────────────
                 val book = try {
-                    tempEpub.readEpubSafely().also {
-                        it.tableOfContents // ← silences NCX warning
-                    }
+                    val loadedBook = tempEpub.readEpubSafely()
+
+                    // Force initialization to silence NCX warning
+                    loadedBook.tableOfContents
+
+                    loadedBook   // explicitly return the book
                 } catch (e: Exception) {
                     tempEpub.delete()
                     throw IllegalStateException("Not a valid EPUB (DRM? Corrupted? Not an EPUB?)", e)
@@ -650,9 +694,7 @@ class MainActivity : AppCompatActivity() {
 
                 // try to preserve table of contents
                 // === ADD THIS BLOCK ===
-                if (book.tableOfContents == null || book.tableOfContents.tocReferences.isEmpty()) {
-                    book.generateTableOfContentsFromSpine()  // You may need to implement this helper
-                }
+              //  rebuildTableOfContents(book)   // ← Add this
 
                 // ── Replace cover (FIXED – uses getResources()) ──────────────────
                 book.resources.remove("cover.jpg")
@@ -678,18 +720,28 @@ class MainActivity : AppCompatActivity() {
                 author?.let { book.metadata.addAuthor(nl.siegmann.epublib.domain.Author(it)) }
 
                 // ── Write back (your Android 13+ code) ───────────────────────────
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    contentResolver.openOutputStream(epubUri, "wt")?.use { os ->
-                        nl.siegmann.epublib.epub.EpubWriter().write(book, os)
-                    } ?: throw IllegalStateException("Cannot write back – missing permission?")
-                } else {
-                    val modifiedTemp = File(cacheDir, "modified.epub")
-                    nl.siegmann.epublib.epub.EpubWriter().write(book, modifiedTemp.outputStream())
-                    contentResolver.openOutputStream(epubUri, "wt")?.use { os ->
-                        modifiedTemp.inputStream().use { it.copyTo(os) }
-                    }
-                    modifiedTemp.delete()
+
+               // val newEpubUri = saveEpubWithNewName(book, epubUri, "")
+                saveToActualLocation(book, epubUri)
+
+
+                // manually add toc.ncx which seems to get lost (may need to add to content file also
+
+                val fileEpub = getFileFromUri(epubUri)
+               // addTocNcxToEpub(fileEpub, fileTocNCX)
+                if (fileEpub != null) {
+                    addNavXhtmlToEpub(fileEpub, fileNavXhtmlSaved)
+
                 }
+
+                addTocNcxToEpub(fileEpub, fileTocNCXSaved)
+
+                // Step 3: Write modified file back to original Uri
+                if (fileEpub != null) {
+                    writeFileBackToUri(fileEpub, epubUri)
+                }   // Wait, we need to rename first
+
+
 
                 // ── Cleanup ───────────────────────────────────────────────────────
                 coverFile.delete()
@@ -712,17 +764,542 @@ class MainActivity : AppCompatActivity() {
         }
     }// end process epub
 
-    private fun File.readEpubSafely(): Book {
+    // Write File → Uri
+    private fun writeFileBackToUri(sourceFile: File, targetUri: Uri) {
+        contentResolver.openOutputStream(targetUri, "wt")?.use { os ->
+            sourceFile.inputStream().use { input ->
+                input.copyTo(os)
+            }
+        } ?: throw IllegalStateException("Cannot write to Uri")
+    }
+    fun saveToActualLocation(book: Book, epubUri: Uri) {
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            contentResolver.openOutputStream(epubUri, "wt")?.use { os ->
+                nl.siegmann.epublib.epub.EpubWriter().write(book, os)
+            } ?: throw IllegalStateException("Cannot write back – missing permission?")
+        } else {
+            val modifiedTemp = File(cacheDir, "modified.epub")
+            nl.siegmann.epublib.epub.EpubWriter().write(book, modifiedTemp.outputStream())
+            contentResolver.openOutputStream(epubUri, "wt")?.use { os ->
+                modifiedTemp.inputStream().use { it.copyTo(os) }
+            }
+            modifiedTemp.delete()
+        }
+    }
+
+    fun saveEpubWithNewName(
+        book: Book,
+        originalUri: Uri,
+        suffix: String = "_withCover"
+    ): Uri? {
+
+        try {
+            val originalName = getFileNameFromUri(originalUri) ?: "book"
+            val baseName = originalName.removeSuffix(".epub" )
+            val newFileName = "${baseName}${suffix}.epub"
+
+            println("Trying to create: $newFileName")
+
+            // Try to create new file
+            val newUri = createNewFileInSameFolder(originalUri, newFileName)
+
+            if (newUri == null) {
+                println("❌ Failed to create new file. Trying alternative method...")
+                return saveUsingTempFileMethod(book, originalUri, newFileName)
+            }
+
+            // Write the EPUB
+            writeBookToUri(book, newUri)
+
+            println("✅ Successfully saved: $newFileName")
+            return newUri
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            println("❌ Error: ${e.message}")
+            return null
+        }
+    }
+
+    // Alternative method (more reliable for Downloads folder)
+    private fun saveUsingTempFileMethod(book: Book, originalUri: Uri, newFileName: String): Uri? {
+        val resolver = contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, newFileName)
+            put(MediaStore.MediaColumns.MIME_TYPE, "application/epub+zip")
+        }
+
+        val newUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: return null
+
+        writeBookToUri(book, newUri)
+        return newUri
+    }
+
+    private fun writeBookToUri(book: Book, uri: Uri) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            contentResolver.openOutputStream(uri, "wt")?.use { os ->
+                nl.siegmann.epublib.epub.EpubWriter().write(book, os)
+            }
+        } else {
+            val tempFile = File(cacheDir, "temp_epub_${System.currentTimeMillis()}.epub")
+            try {
+                nl.siegmann.epublib.epub.EpubWriter().write(book, tempFile.outputStream())
+                contentResolver.openOutputStream(uri, "wt")?.use { os ->
+                    tempFile.inputStream().use { it.copyTo(os) }
+                }
+            } finally {
+                tempFile.delete()
+            }
+        }
+    }
+
+    // Create new file in the same directory
+    private fun createNewFileInSameFolder(originalUri: Uri, newFileName: String): Uri? {
+        val documentFile = DocumentFile.fromSingleUri(this, originalUri) ?: return null
+        val parent = documentFile.parentFile ?: return null
+
+        // Delete if file with same name already exists
+        parent.findFile(newFileName)?.delete()
+
+        return parent.createFile("application/epub+zip", newFileName)?.uri
+    }
+    fun addFileToEpub(epubFile: File?, fileToAdd: File, strFileNameToAdd: String) {
+        epubFile?.exists()?.let {
+            if (!it) {
+                println("❌ EPUB file not found: $epubFile")
+                return
+            }
+        }
+        if (!fileToAdd.exists()) {
+            println("❌ Source file not found: $fileToAdd")
+            return
+        }
+
+        val tempFile = File(epubFile?.parentFile, "${epubFile?.name}.tmp")
+
+        // Ensure the target file name has the OEBPS/ prefix
+        // If it already starts with "OEBPS/", use it as is; otherwise, prepend it.
+        val targetZipPath = if (strFileNameToAdd.startsWith("OEBPS/", ignoreCase = true)) {
+            strFileNameToAdd
+        } else {
+            "OEBPS/$strFileNameToAdd"
+        }
+
+        try {
+            ZipFile(epubFile).use { zipIn ->
+                ZipOutputStream(FileOutputStream(tempFile)).use { zipOut ->
+
+                    // Copy all existing entries
+                    zipIn.entries().asSequence().forEach { entry ->
+                        zipIn.getInputStream(entry).use { input ->
+
+                            // Check if this existing entry matches our target path to replace it
+                            if (entry.name.equals(targetZipPath, ignoreCase = true)) {
+                                return@forEach  // Skip old file to allow replacement
+                            }
+
+                            val newEntry = ZipEntry(entry.name)
+                            zipOut.putNextEntry(newEntry)
+                            input.copyTo(zipOut)
+                            zipOut.closeEntry()
+                        }
+                    }
+
+                    // Add the new file to the specific OEBPS path
+                    val fileBytes = fileToAdd.readBytes()
+                    val ncxEntry = ZipEntry(targetZipPath).apply {
+                        method = ZipEntry.DEFLATED
+                    }
+
+                    zipOut.putNextEntry(ncxEntry)
+                    zipOut.write(fileBytes)
+                    zipOut.closeEntry()
+                }
+            }
+
+            // Replace original with updated version
+            if (epubFile?.delete() == true && tempFile.renameTo(epubFile)) {
+                println("✅ Successfully added/replaced $targetZipPath in ${epubFile.name}")
+            } else {
+                println("❌ Failed to replace original EPUB")
+            }
+
+        } catch (e: Exception) {
+            println("❌ Error while adding file: ${e.message}")
+            tempFile.delete()
+        }
+    }
+
+    fun addTocNcxToEpub(epubFile: File?, tocNcxFile: File) {
+      addFileToEpub(epubFile, tocNcxFile, "toc.ncx")
+    }
+
+    fun addNavXhtmlToEpub(epubFile: File, navFile: File) {
+        if (!epubFile.exists() || !navFile.exists()) {
+            println("❌ Required file not found")
+            return
+        }
+
+        val tempFile = File(epubFile.parentFile, "${epubFile.name}.tmp")
+
+        try {
+            var usesOebps = false
+            var opfPath = "content.opf"
+
+            ZipFile(epubFile).use { zipIn ->
+                // Detect structure
+                zipIn.entries().asSequence().forEach { entry ->
+                    if (entry.name.equals("OEBPS/content.opf", ignoreCase = true)) {
+                        usesOebps = true
+                        opfPath = "OEBPS/content.opf"
+                    }
+                }
+
+                println("📁 EPUB structure detected: ${if (usesOebps) "OEBPS folder" else "Flat (root)"}")
+
+                ZipOutputStream(FileOutputStream(tempFile)).use { zipOut ->
+
+                    zipIn.entries().asSequence().forEach { entry ->
+                        zipIn.getInputStream(entry).use { input ->
+                            val entryName = entry.name
+
+                            when {
+                                // Update content.opf
+                                entryName.equals(opfPath, ignoreCase = true) -> {
+                                    val opfContent = input.readBytes().toString(Charsets.UTF_8)
+                                    val updatedOpf = updateOpfWithNav(opfContent, usesOebps)
+
+                                    zipOut.putNextEntry(ZipEntry(entryName))
+                                    zipOut.write(updatedOpf.toByteArray(Charsets.UTF_8))
+                                    zipOut.closeEntry()
+                                }
+
+                                // Skip existing nav.xhtml
+                                entryName.equals("nav.xhtml", ignoreCase = true) ||
+                                        entryName.equals("OEBPS/nav.xhtml", ignoreCase = true) -> {
+                                    return@forEach
+                                }
+
+                                else -> {
+                                    zipOut.putNextEntry(ZipEntry(entryName))
+                                    input.copyTo(zipOut)
+                                    zipOut.closeEntry()
+                                }
+                            }
+                        }
+                    }
+
+                    // Add nav.xhtml in correct location
+                    val navEntryPath = if (usesOebps) "OEBPS/nav.xhtml" else "nav.xhtml"
+
+                    val navBytes = navFile.readBytes()
+                    val navEntry = ZipEntry(navEntryPath).apply {
+                        method = ZipEntry.DEFLATED
+                    }
+
+                    zipOut.putNextEntry(navEntry)
+                    zipOut.write(navBytes)
+                    zipOut.closeEntry()
+
+                    println("✅ nav.xhtml added at: $navEntryPath")
+                }
+            }
+
+            // Replace original
+            if (epubFile.delete() && tempFile.renameTo(epubFile)) {
+                println("✅ EPUB successfully updated with nav.xhtml")
+            } else {
+                println("❌ Failed to replace original EPUB")
+            }
+
+        } catch (e: Exception) {
+            e.printStackTrace()
+            tempFile.delete()
+        }
+    }
+
+    private fun updateOpfWithNav(opfContent: String, usesOebps: Boolean): String {
+        var result = opfContent
+        val navHref = if (usesOebps) "nav.xhtml" else "nav.xhtml"
+
+        if (result.contains("<opf:manifest")) {
+            // Namespaced
+            if (!result.contains("id=\"nav\"")) {
+                result = result.replace(
+                    "</opf:manifest>",
+                    """<opf:item id="nav" href="$navHref" media-type="application/xhtml+xml" properties="nav"/></opf:manifest>"""
+                )
+            }
+        } else if (result.contains("<manifest")) {
+            // Non-namespaced
+            if (!result.contains("id=\"nav\"")) {
+                result = result.replace(
+                    "</manifest>",
+                    """<item id="nav" href="$navHref" media-type="application/xhtml+xml" properties="nav"/></manifest>"""
+                )
+            }
+        } else {
+            println("⚠️ Could not find manifest tag in content.opf")
+        }
+
+        return result
+    }
+
+    private fun File.readEpubSafely( ): Book {
         require(exists() && length() > 0L) { "EPUB file is missing or empty" }
 
         val epubReader = EpubReader()
 
-        // This is the CORRECT call in epublib 3.1
-        // readEpubLazy takes (InputStream, String)
         return this.inputStream().use { inputStream ->
-            epubReader.readEpubLazy(this.absolutePath, "UTF-8")
+            try {
+                // Prefer full read over lazy for better resource loading
+                val book = epubReader.readEpub(inputStream)
+
+                Log.d("EPUB", "Loaded with readEpub() - Resources: ${book.resources.all.size}")
+
+                // Force load ALL resources (important for nav.xhtml, toc.ncx, etc.)
+                book.resources.all.forEach { resource ->
+                    try {
+                        if (resource.data == null || resource.data.isEmpty()) {
+                            // This triggers actual loading of the resource data
+                            resource.inputStream.use { it.readBytes() }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("EPUB", "Failed to preload resource: ${resource.href}", e)
+                    }
+                }
+
+                // Create Resource from file
+
+
+
+                // Extra: explicitly look for nav.xhtml after loading
+                val nav = book.resources.getByHref("nav.xhtml")
+                    ?: book.resources.getByHref("OEBPS/nav.xhtml")
+                    ?: book.resources.all.firstOrNull { it.href?.contains("nav.xhtml", true) == true }
+
+                Log.d("EPUB", "nav.xhtml found after loading: ${nav != null} | href=${nav?.href}")
+
+                book
+
+            } catch (e: Exception) {
+                Log.w("EPUB", "Full readEpub failed, trying fallback", e)
+
+                // Fallback
+                val book = epubReader.readEpubLazy(this.absolutePath, "UTF-8")
+
+                // Force resource initialization
+                book.resources.all.forEach { it.data }
+
+                book
+            }
         }
     }
+
+    private fun getNavXhtml(epubFile: File): File {
+
+        val extractDir = File(epubFile.parent, "extracted_${System.currentTimeMillis()}")
+        unzip(epubFile, extractDir)
+        val oebpsFolder = File(extractDir, "OEBPS")
+        val fileNavXhtml = File(oebpsFolder, "nav.xhtml")
+        return fileNavXhtml
+
+    } // end function getNavXhtml
+
+    private fun getTocNCX(epubFile: File): File {
+
+        val extractDir = File(epubFile.parent, "extracted_${System.currentTimeMillis()}")
+        unzip(epubFile, extractDir)
+        val oebpsFolder = File(extractDir, "OEBPS")
+        val tocNCX = File(oebpsFolder, "toc.ncx")
+        return tocNCX
+
+    } // end function getNavXhtml
+
+    private fun normalizeGoogleDocsEpub(tempEpub: File, bookTitle: String = "A Book Title" ): Boolean {
+
+        try {
+            // Extract the EPUB
+            val extractDir = File(tempEpub.parent, "extracted_${System.currentTimeMillis()}")
+            unzip(tempEpub, extractDir)
+
+            // Find the weird GoogleDoc folder
+            val googleDocFolder = extractDir.listFiles()?.firstOrNull {
+                it.isDirectory && it.name.contains("GoogleDoc", ignoreCase = true)
+            }
+
+            val metaInfFolder = extractDir.listFiles()?.firstOrNull {
+                it.isDirectory && it.name.contains("META-INF", ignoreCase = true)
+            }
+
+            if (googleDocFolder != null && googleDocFolder.name != "OEBPS") {
+                val newOebpsFolder = File(extractDir, "OEBPS")
+
+                if (googleDocFolder.renameTo(newOebpsFolder)) {
+                    Log.d("EPUB", "Renamed ${googleDocFolder.name} → OEBPS")
+
+                    // Update container.xml to point to new location
+                    updateContainerXml(extractDir)
+                    // rename the weird google doc filename to content.xml
+                  //  renameWeirdFileNameToContentXML(newOebpsFolder)
+
+
+                    val navFile = File(newOebpsFolder, "nav.xhtml")           // or wherever it is
+                    val ncxFile = File(newOebpsFolder, "toc.ncx")
+                    //for older versions build v2 epub table of contents
+                    generateTocNcxFromNav(navFile, ncxFile, bookTitle )
+
+                    // Re-zip the EPUB
+                    zipFolder(extractDir, tempEpub)
+
+                    // Clean up
+                    extractDir.deleteRecursively()
+                    return true
+                }
+            } else {
+                extractDir.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            Log.e("EPUB", "Failed to normalize folder structure", e)
+        }
+        return false
+    } // end fun normalize google doc
+
+    private fun unzip(zipFile: File, targetDir: File) {
+        java.util.zip.ZipInputStream(java.io.FileInputStream(zipFile)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                val file = File(targetDir, entry.name)
+                if (entry.isDirectory) {
+                    file.mkdirs()
+                } else {
+                    file.parentFile?.mkdirs()
+                    file.outputStream().use { fos -> zis.copyTo(fos) }
+                }
+                entry = zis.nextEntry
+            }
+        }
+    }
+
+    private fun zipFolder(sourceDir: File, targetZip: File) {
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(targetZip)).use { zos ->
+            sourceDir.walkTopDown().forEach { file ->
+                if (file.isFile) {
+                    val zipEntry = java.util.zip.ZipEntry(file.relativeTo(sourceDir).path)
+                    zos.putNextEntry(zipEntry)
+                    file.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
+            }
+        }
+    }
+
+    private fun updateContainerXml(extractDir: File) {
+        val containerFile = File(extractDir, "META-INF/container.xml")
+        if (containerFile.exists()) {
+            var content = containerFile.readText()
+            // Update rootfile path if it points to GoogleDoc
+            content = content.replace(
+                Regex("""full-path="[^"]*GoogleDoc/[^"]*content\.opf"""", RegexOption.IGNORE_CASE),
+                """full-path="OEBPS/content.opf""""
+            )
+            content = content.replace(
+                Regex("""full-path="[^"]*GoogleDoc/[^"]*package\.opf"""", RegexOption.IGNORE_CASE),
+                """full-path="OEBPS/package.opf""""
+            )
+            containerFile.writeText(content)
+        }
+    }
+
+    private fun renameWeirdFileNameToContentXML(extractDir: File) {
+        if (!extractDir.isDirectory) return
+
+        val xhtmlFiles = extractDir.listFiles { _, name ->
+            name.lowercase().endsWith(".xhtml")
+        }?.filter { it.name.lowercase() != "nav.xhtml" } ?: emptyList()
+
+        xhtmlFiles.forEach { file ->
+            val target = File(extractDir, "content.xhtml")
+
+            if (target.exists()) {
+                println("content.xhtml already exists. Skipping rename of ${file.name}")
+                return@forEach
+            }
+
+            if (file.renameTo(target)) {
+                println("Successfully renamed ${file.name} to content.xhtml")
+            } else {
+                println("Failed to rename ${file.name} to content.xhtml")
+            }
+        }
+    }
+
+
+    private fun generateTocNcxFromNav(navFile: File, outputNcxFile: File, bookTitle: String = "Book Title") {
+        if (!navFile.exists()) {
+            println("❌ nav.xhtml not found at: ${navFile.absolutePath}")
+            return
+        }
+
+        val content = navFile.readText()
+
+        // Extract all <a href="...">...</a> links from the TOC
+        val linkRegex = Regex("""<a\s+href="([^"]+)"[^>]*>(.*?)</a>""", RegexOption.IGNORE_CASE)
+
+        val entries = linkRegex.findAll(content)
+            .map { match ->
+                val href = match.groupValues[1].trim()
+                val text = match.groupValues[2]
+                    .replace(Regex("<.*?>"), "")   // remove nested HTML tags
+                    .trim()
+                Pair(text, href)
+            }
+            .filter { it.first.isNotBlank() && it.second.isNotBlank() }
+            .toList()
+
+        if (entries.isEmpty()) {
+            println("⚠️ No TOC entries found in nav.xhtml")
+            return
+        }
+
+        val ncxContent = buildString {
+            appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
+            appendLine("""<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="en">""")
+            appendLine("  <head>")
+            appendLine("""    <meta name="dtb:uid" content="${bookTitle.hashCode()}" />""")
+            appendLine("    <meta name=\"dtb:depth\" content=\"3\" />")
+            appendLine("    <meta name=\"dtb:totalPageCount\" content=\"0\" />")
+            appendLine("    <meta name=\"dtb:maxPageNumber\" content=\"0\" />")
+            appendLine("  </head>")
+            appendLine("  <docTitle>")
+            appendLine("    <text>$bookTitle</text>")
+            appendLine("  </docTitle>")
+            appendLine("  <navMap>")
+
+            entries.forEachIndexed { index, (text, href) ->
+                val playOrder = index + 1
+                appendLine("""    <navPoint id="navPoint$playOrder" playOrder="$playOrder">""")
+                appendLine("      <navLabel>")
+                appendLine("        <text>$text</text>")
+                appendLine("      </navLabel>")
+                appendLine("""      <content src="$href" />""")
+                appendLine("    </navPoint>")
+            }
+
+            appendLine("  </navMap>")
+            appendLine("</ncx>")
+        }
+
+        outputNcxFile.writeText(ncxContent, Charsets.UTF_8)
+        println("✅ Successfully created toc.ncx with ${entries.size} entries")
+        println("   nav.xhtml was kept untouched")
+    } // end function rebuildTableOfContents
+
+
+
+
 
     private fun File.readEpubSafely2(): Book {
         require(exists() && length() > 0L) { "EPUB file is missing or empty" }
@@ -757,6 +1334,24 @@ class MainActivity : AppCompatActivity() {
         val authorTextSizeSp: Float = 56f
     )
 
+
+        private fun getRandomHarmoniousColors(): Pair<Int, Int> {
+            val random = java.util.Random()
+            val baseHue = random.nextInt(360)
+
+            val hue1 = (baseHue).mod(360)
+            val hue2 = (baseHue + 45 + random.nextInt(50)).mod(360)  // nice separation
+
+            val saturation = 75 + random.nextInt(20)
+            val brightness1 = 80 + random.nextInt(18)
+            val brightness2 = (brightness1 - 12).coerceAtLeast(55)
+
+            val color1 = android.graphics.Color.HSVToColor(floatArrayOf(hue1.toFloat(), saturation/100f, brightness1/100f))
+            val color2 = android.graphics.Color.HSVToColor(floatArrayOf(hue2.toFloat(), saturation/100f, brightness2/100f))
+
+            return Pair(color1, color2)
+        }
+
     fun generateCover(context: android.content.Context, options: CoverOptions): File {
         val bitmap = Bitmap.createBitmap(options.width, options.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -773,11 +1368,8 @@ class MainActivity : AppCompatActivity() {
             bgPaint.shader = shader
         } else {
             // Default beautiful gradient if none provided
-            val defaultColors = intArrayOf(
-                Color.parseColor("#1E3A8A"), // deep blue
-                Color.parseColor("#3B82F6")  // bright blue
-            )
-            val shader = LinearGradient(0f, 0f, 0f, options.height.toFloat(), defaultColors, null, Shader.TileMode.CLAMP)
+            val (color1, color2) = getRandomHarmoniousColors()
+            val shader = LinearGradient(0f, 0f, 0f, options.height.toFloat(), color1,color2 , Shader.TileMode.CLAMP)
             bgPaint.shader = shader
         }
         canvas.drawRect(0f, 0f, options.width.toFloat(), options.height.toFloat(), bgPaint)

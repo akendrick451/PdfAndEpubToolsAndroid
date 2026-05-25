@@ -19,17 +19,18 @@
         android:text="Set PDF Title" />
 
     <TextView
-
+        android:id="@+id/text_version"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="v0.9" />
+        android:text="" />
+
 
     <TextView
 
         android:layout_width="251dp"
         android:layout_height="wrap_content"
         android:text="This app let's you pick a pdf and then saves that PDF with the title being the filename into
-the downloads directory. By AKTools. 6 Dec 2025 " />
+the downloads directory. Also does epub stuff. By AKTools. 17 May 2026 " />
 
 
 
